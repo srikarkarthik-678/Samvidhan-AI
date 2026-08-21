@@ -47,6 +47,10 @@ agentic-rag/
 └── README.md
 ```
 
+
+<img width="1906" height="944" alt="image" src="https://github.com/user-attachments/assets/c716c5a1-2805-4b13-847a-bec2f852af80" />
+
+
 ## Prerequisites
 
 - Python 3.10+
