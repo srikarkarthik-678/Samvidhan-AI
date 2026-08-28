@@ -1,15 +1,14 @@
-# AI Research Assistant — Agentic RAG
+# Samvidhaan AI — Agentic RAG for the Constitution of India
 
-An AI research assistant that answers questions over your own PDFs/documents. Instead of a static "retrieve top-k, stuff into prompt" RAG pipeline, this uses a **LangGraph agent** that decides how to handle each question:
+An AI research assistant that helps law students look up and understand provisions of the Constitution of India. Instead of a static "retrieve top-k, stuff into prompt" RAG pipeline, this uses a **LangGraph agent** that decides how to handle each question:
 
 - Skips retrieval entirely for questions that don't need the document corpus
+- Uses **hybrid retrieval**: exact Article-number lookup when a question names a specific Article, falling back to semantic search for conceptual questions
 - Grades retrieved chunks for relevance instead of trusting top-k blindly
 - Rewrites and retries the query if nothing relevant comes back
-- Verifies the generated answer is actually grounded in the retrieved context before returning it
+- Verifies the generated answer is grounded in the retrieved context before returning it
+- Preserves the Constitution's structure (Article number, Part) via structure-aware chunking, and cites answers according
 
-```
-route → retrieve → grade docs → (rewrite + retry | generate) → verify → (regenerate | finalize)
-```
 
 ## Tech Stack
 
@@ -19,37 +18,6 @@ route → retrieve → grade docs → (rewrite + retry | generate) → verify �
 - **FastAPI** — backend API
 - **Streamlit** — chat UI
 
-## Project Structure
-
-```
-agentic-rag/
-│
-├── app.py                  # FastAPI backend (upload, reindex, ask, health)
-├── streamlit_app.py        # Streamlit chat UI
-│
-├── agents/
-│   ├── graph.py             # LangGraph graph definition
-│   ├── nodes.py             # Node logic: route, retrieve, grade, rewrite, generate, verify
-│   └── state.py              # Shared agent state schema
-│
-├── rag/
-│   ├── loader.py             # Loads PDFs / txt / md into LangChain Documents
-│   ├── splitter.py           # Chunks documents
-│   ├── embeddings.py         # Embedding provider setup
-│   └── retriever.py          # Vector store + retriever setup
-│
-├── data/
-│   └── documents/            # Drop source documents here (or upload via UI)
-│
-├── chroma_db/                # Persisted vector store (auto-created)
-├── .env                       # API keys and config
-├── requirements.txt
-└── README.md
-```
-
-
-<img width="1906" height="944" alt="image" src="https://github.com/user-attachments/assets/c716c5a1-2805-4b13-847a-bec2f852af80" />
-
 
 ## Prerequisites
 
@@ -58,19 +26,14 @@ agentic-rag/
 
 ## Setup
 
-### 1. Clone / create the project and enter it
+### 1. Clone and enter the project
 
 ```bash
-cd agentic-rag
+git clone https://github.com/srikarkarthik-678/Ai-Research.git
+cd Ai-Research
 ```
 
 ### 2. Create and activate a virtual environment
-
-**macOS / Linux:**
-```bash
-python3 -m venv venv
-source venv/bin/activate
-```
 
 **Windows (PowerShell):**
 ```powershell
@@ -78,12 +41,16 @@ python -m venv venv
 .\venv\Scripts\Activate.ps1
 ```
 
+**macOS / Linux:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
+
 > If PowerShell blocks the activation script with an execution-policy error, run this once:
 > ```powershell
 > Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 > ```
-
-Your terminal prompt should show `(venv)` once it's active.
 
 ### 3. Install dependencies
 
@@ -93,7 +60,7 @@ pip install -r requirements.txt
 
 ### 4. Configure environment variables
 
-Create/edit `.env` in the project root:
+Create a `.env` file in the project root:
 
 ```env
 LLM_PROVIDER=openai
@@ -105,21 +72,19 @@ CHROMA_DIR=./chroma_db
 DOCS_DIR=./data/documents
 ```
 
-To use Gemini instead, set `LLM_PROVIDER=gemini`, `EMBEDDING_PROVIDER=gemini`, and fill in `GOOGLE_API_KEY` / `GEMINI_MODEL`.
+## Adding the Constitution
 
-## Adding Documents
-
-Supported formats: `.pdf`, `.txt`, `.md` (scanned/image-only PDFs won't extract text).
-
-**Option A — via the Streamlit UI:** upload files in the sidebar and click "Index Documents" (once the app is running — see below).
-
-**Option B — manually:** drop files into `data/documents/`, then index from the command line:
+1. Get a clean, text-based (not scanned) PDF of the Constitution of India — e.g. from `legislative.gov.in` or `india.gov.in`
+2. Save it as `data/documents/constitution_of_india.pdf` (filename must contain "constitution" to trigger Article-aware chunking)
+3. Index it:
 
 ```bash
-python -c "from rag.retriever import index_directory; print(index_directory('./data/documents'))"
+python -c "from rag.loader import load_documents; from rag.retriever import index_constitution; docs = load_documents(['./data/documents/constitution_of_india.pdf']); print(index_constitution(docs))"
 ```
 
-This prints the number of chunks indexed.
+This should print a number in the hundreds (the Constitution has ~470 Articles).
+
+Other supported document types (`.pdf`, `.txt`, `.md`) get indexed with the generic splitter via `/upload` or `/reindex`.
 
 ## Running the App
 
@@ -129,36 +94,39 @@ You need **two terminals**, both with the venv activated.
 ```bash
 uvicorn app:app --reload --port 8000
 ```
-Verify it's up at [http://localhost:8000/health](http://localhost:8000/health) → should return `{"status":"ok"}`. Interactive API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
+Verify at [http://localhost:8000/health](http://localhost:8000/health) → `{"status":"ok"}`. API docs: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 **Terminal 2 — frontend:**
 ```bash
 streamlit run streamlit_app.py
 ```
-Opens at [http://localhost:8501](http://localhost:8501). Upload documents and start asking questions.
+Opens at [http://localhost:8501](http://localhost:8501).
 
 ## API Endpoints
 
-| Method | Endpoint    | Description                                  |
-|--------|-------------|-----------------------------------------------|
-| GET    | `/health`   | Health check                                   |
-| POST   | `/upload`   | Upload and index one or more documents         |
-| POST   | `/reindex`  | Re-index everything currently in `DOCS_DIR`    |
-| POST   | `/ask`      | Ask a question — body: `{"question": "..."}`    |
+| Method | Endpoint    | Description                                              |
+|--------|-------------|------------------------------------------------------------|
+| GET    | `/health`   | Health check                                                |
+| POST   | `/upload`   | Upload and index documents (routes Constitution PDFs correctly) |
+| POST   | `/reindex`  | Re-index everything currently in `DOCS_DIR`                 |
+| POST   | `/ask`      | Ask a question — body: `{"question": "..."}`                |
+
+## Example Queries
+
+- `"What does Article 21 say?"` — exact-match retrieval by Article number
+- `"Which article protects freedom of speech?"` — semantic/conceptual retrieval
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---|---|
-| `ModuleNotFoundError: agents` / `rag` | Run `uvicorn` / `streamlit` from the project root, not from inside a subfolder |
-| `streamlit`/`uvicorn` not recognized | Venv isn't activated in that terminal — activate it, then reinstall if needed |
-| `venv\Scripts\Activate.ps1` not found | The venv wasn't created — run `python -m venv venv` first |
-| `AuthenticationError` from OpenAI | Check `.env` has the correct key and that billing is enabled on your OpenAI account |
-| Streamlit: "connection refused" | Backend isn't running — start `uvicorn` first, in a separate terminal |
-| Answers say "no relevant context found" | Nothing has been indexed yet — add documents and index them (see above) |
-| `ImportError: cannot import name 'Chroma'` | Run `pip install -U langchain-chroma` |
+| `ModuleNotFoundError: agents` / `rag` | Run `uvicorn` / `streamlit` from the project root |
+| `NameError: ARTICLE_QUERY_PATTERN not defined` | Ensure the regex constant is defined at module level in `retriever.py`, above any functions that use it |
+| "No relevant context" for a known Article | File likely wasn't indexed via `index_constitution()` — check filename contains "constitution" and re-index; clear `chroma_db/` if old generic-chunked data exists |
+| `AuthenticationError` from OpenAI | Check `.env` has the correct key and billing is enabled |
+| Streamlit: "connection refused" | Start the FastAPI backend first |
+| `ValueError: Expected Embeddings to be non-empty` | Uploaded file had no extractable text (likely a scanned/image-only PDF) |
 
-## Notes
+## Disclaimer
 
-- `chroma_db/` and `data/documents/` are created automatically and will hold your indexed data — exclude them from git if you don't want to commit indexed content.
-- Each new terminal needs the venv reactivated — it doesn't persist across terminal sessions.
+This tool is for educational purposes only and does not constitute legal advice.
