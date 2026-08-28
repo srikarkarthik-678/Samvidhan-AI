@@ -7,7 +7,7 @@ from pydantic import BaseModel
 load_dotenv()
 
 from agents.graph import compiled_graph
-from rag.retriever import index_directory, index_documents
+from rag.retriever import index_directory, index_documents, index_constitution
 from rag.loader import load_documents
 
 DOCS_DIR = os.getenv("DOCS_DIR", "./data/documents")
@@ -26,6 +26,11 @@ class QueryResponse(BaseModel):
     verified: bool
 
 
+def _looks_like_constitution(filename: str) -> bool:
+    name = filename.lower()
+    return "constitution" in name
+
+
 @app.post("/upload")
 async def upload_files(files: list[UploadFile] = File(...)):
     saved_paths = []
@@ -39,7 +44,20 @@ async def upload_files(files: list[UploadFile] = File(...)):
     if not docs:
         raise HTTPException(400, "No supported documents found (.pdf, .txt, .md)")
 
-    chunk_count = index_documents(docs)
+    # Route Constitution PDFs through the Article-aware splitter/indexer,
+    # everything else through the generic one.
+    if any(_looks_like_constitution(f.filename) for f in files):
+        chunk_count = index_constitution(docs)
+    else:
+        chunk_count = index_documents(docs)
+
+    if chunk_count == 0:
+        raise HTTPException(
+            400,
+            "File(s) uploaded but no extractable text was found — likely a scanned/"
+            "image-only PDF. Try a text-based PDF or a .txt/.md file instead."
+        )
+
     return {"indexed_files": [f.filename for f in files], "chunks_added": chunk_count}
 
 

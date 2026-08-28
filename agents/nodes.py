@@ -5,6 +5,7 @@ from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 
 from agents.state import AgentState
 from rag.retriever import get_retriever
+from rag.retriever import hybrid_retrieve
 
 load_dotenv()
 
@@ -63,7 +64,7 @@ def direct_answer(state: AgentState) -> AgentState:
 
 # ---------- 3. RETRIEVE ----------
 def retrieve(state: AgentState) -> AgentState:
-    docs = retriever.invoke(state["question"])
+    docs = hybrid_retrieve(state["question"], k=5)
     return {**state, "documents": docs}
 
 
@@ -110,9 +111,12 @@ def rewrite_query(state: AgentState) -> AgentState:
 
 # ---------- 6. GENERATE ----------
 generate_prompt = ChatPromptTemplate.from_messages([
-    ("system", "Answer the user's question using ONLY the provided context chunks. "
-               "Cite sources inline like [source:chunk_id]. "
-               "If context is insufficient, say so explicitly rather than guessing."),
+    ("system",
+     "You are a study aid for law students learning the Constitution of India. "
+     "Answer using ONLY the provided context. Explain in plain, simple language first, "
+     "then cite the exact provision like [Article 21, Part III]. "
+     "If the context is insufficient, say so explicitly rather than guessing. "
+     "Always end with: 'This is for educational purposes only and is not legal advice.'"),
     ("human", "Question: {question}\n\nContext:\n{context}"),
 ])
 generate_chain = generate_prompt | llm | StrOutputParser()
@@ -120,12 +124,15 @@ generate_chain = generate_prompt | llm | StrOutputParser()
 
 def generate(state: AgentState) -> AgentState:
     context = "\n\n".join(
-        f"[{d.metadata.get('source')}:{d.metadata.get('chunk_id')}] {d.page_content}"
+        f"[Article {d.metadata.get('article_number')}, {d.metadata.get('part')}] {d.page_content}"
         for d in state["documents"]
     ) or "No relevant context found in the document corpus."
 
     answer = generate_chain.invoke({"question": state["original_question"], "context": context})
-    citations = list({f"{d.metadata.get('source')}:{d.metadata.get('chunk_id')}" for d in state["documents"]})
+    citations = list({
+        f"Article {d.metadata.get('article_number')} ({d.metadata.get('part')})"
+        for d in state["documents"] if d.metadata.get("article_number")
+    })
     return {**state, "generation": answer, "citations": citations}
 
 
